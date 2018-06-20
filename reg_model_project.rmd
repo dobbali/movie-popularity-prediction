@@ -1,0 +1,387 @@
+---
+title: "Modeling and prediction for movies"
+output:
+  pdf_document: default
+  html_document:
+    fig_height: 4
+    highlight: pygments
+    theme: spacelab
+---
+
+## Setup
+
+### Load packages
+
+```{r load-packages, message = FALSE}
+library(ggplot2)
+library(dplyr)
+library(statsr)
+library(MASS)
+library(olsrr)
+```
+
+### Load data
+
+Make sure your data and R Markdown files are in the same directory. When loaded
+your data file will be called `movies`. Delete this note when before you submit 
+your work. 
+
+```{r load-data}
+load("movies.Rdata")
+```
+
+
+* * *
+
+## Part 1: Data
+
+
+Data set we have here provides us information on how audience and critics like movies along with different features about the movies. This data set is acuqired from Rotten Tomatoes and IMDB, websites which are very popular for movies information and reviews. This data set has 651 randomly sampled movies which were released before 2016. As the technique used to collect the data is random sampling,we can say that the conclusions made from the dataset should be generalizable to over all population
+
+We can only look for evidence for associations in the data set and we cannot derive casual relations because there is no random assignment is used for the variables understand consideration 
+
+
+* * *
+
+## Part 2: Research question
+
+Movies are very popular entertainment sources. People wait for their favorite movies, love them, hate them, discuss about them.Because of being so common in daily life and having huge user base, it is a billion dollar industry. Consumers(audiences and critics both) are the ones who can make or break a movies' future. If we do not look into the data, we might think that consumers liking or disliking movies is totally random. But, there are so many attributes such as who is the lead actor/director of a movie, how intersting the trailer of a movie is etc,   for a movie that might actually influence the consumers decison. 
+
+Here, we have a dataset of 651 movies with each movie having 32 variables or attributes. There might be many more features we might be missing that might effect movie popularity But, it is a good idea to make the best out of what we have in hand. In real world, not everytime we might have all the data what we need. If we can build a model that can factor in all or few features of this dataset, we should be able to understand, atleast to some extent, about what is the ideal receipe for making a good popular? or How to prioritize features while creating a movie? It interests me because great reviews are directly proportional to how much return on investment will a movie result in. 
+
+Interesting observation that could be made here is, model needs to know how popular the movie going to be from the data set but we don't have any column named popularity in the dataset.One more column which is close to be an indicator of popularity is `critics_score`. But, usually critics tend to review the movie even before it is released. So, it might be one of the independent varaibles which might influence a movie to be popular or not. Also, it seem like `imdb_rating` or `audience_score` are potential target variables which shows how much rating did the movie receive on IMDB and Rotten Tomatoes respectively. 
+
+
+```{r summary-target-variables}
+
+summary(movies$imdb_rating)
+
+summary(movies$audience_score)
+
+summary(movies$imdb_num_votes)
+
+```
+
+These two variables are on a different scale. Imdb rating is on a 10-point scale where as audience score varies between 11 - 97. As these two are equally good candidates for target variable, it might be a good idea to create a dervied variable, 'popularity' from these two.
+
+
+```{r saint-of-911}
+movies[(movies$title == 'Driving Miss Daisy') | (movies$title == 'Saint of 9/11') , ][, c('title','critics_score','audience_score','imdb_rating','imdb_num_votes')]
+```
+
+But, rating and popularity are two different things. A movie rating might be pretty high if you look a absolute number but the total number of votes might be very low. 
+
+'Saint of 9/11' movie released in 2006 in the dataset has high imdb_rating(7.8), audience_score(79) & critics_score(84). But, total number of votes this movie received is only 180 compared to max votes for any movie in the data set is 893008.
+
+If you compare this movie with 'Driving Miss Daisy', both of these movies have very similary critics_score, audience_score, imdb_rating but they have very significant difference in total number of votes on imdb. 
+ 
+So,along with rating of a movie, it is a good idea to weigh in the number of votes it received to create our dependent variable. Also, after a movie certain level of popularity, it start getting more popular very quickly that is it grown exponentially in terms of popularity. 
+
+Considering these two factors, Bayesian average is being used here with 3rd quartile value of IMDB votes as average instead of max value of IMDB votes. This process is done after the cleaning of dataset because there are bunch of NA's which is spitting out errors.
+
+Firstly, let's create an average rating based on imdb_rating & audience_score. To put them on same scale, imdb_ratings are multiplied by 10
+
+```{r avg-pop-score}
+
+movies$popularity <- ((movies$imdb_rating * 10) + movies$audience_score) / 2
+movies[movies$title == 'Saint of 9/11',]
+```
+
+Using this, Ra = W * R +(1−W) * R0 formula we will be accounting for movies with different 
+where
+
+Ra= averaged ('bayesian') rating
+R= individual rating: average rating for one movie
+R0=  global average rating for all the movies
+W= weight factor: votes/3rd quartile of votes in data
+
+
+```{r bayseian-avg}
+movies$popularity <- (movies$imdb_num_votes / quantile(movies$imdb_num_votes, 0.75))* movies$popularity + (1 - (movies$imdb_num_votes / quantile(movies$imdb_num_votes, 0.75))) * mean(movies$popularity)
+```
+
+To summarize, research questions could be, 
+
+"Can we predict the derived dependent varibale `popularity` from various attributes of the movies in the dataset after it is released?"
+
+This could be valuble to business because, companies producing movies could invest their money in markteting and advertising cleverly depending upon likelyhood of it being popular or likeable for audience
+
+* * *
+
+## Part 3: Exploratory data analysis
+
+Before, we start building model, it is a good idea to  dig into data and clean it up a bit. Also, we need to visualy see what kind of patterns are hidden inside the data. 
+
+```{r strcuture-dataset}
+
+str(movies)
+
+```
+```{r genre-distribution} 
+
+table(movies$genre)
+
+```
+ 
+This gives us details on total number of movies in each genre. Drama movies being the highest number of movies and SCi-Fi movies , Animiation movies are lowest in number in the dataset. 
+
+Before that, There could be NA values which might return errors while doing calculations.It is  better to check for them and get rid of those values by deleting entire row or imputing it by various means
+
+```{r checking-for-NA}
+
+nulls <- movies %>%
+  summarise_all(funs(sum(is.na(.))))
+
+as.data.frame(nulls)
+
+```
+
+There are very few null values per each column. It might not be worth the time to impute those values. Instead, we could remove the entire rows for columns studio, dvd_rel_year, ded_rel_month, dvd_rel_day.(Have not included actor1 through actor5 and director because those columns are not going to be considered for modelling anyway)
+
+
+```{r remove-nulls}
+
+remove_nulls <- function(data, desiredCols) {
+  completeVec <- complete.cases(data[, desiredCols])
+  return(data[completeVec, ])
+}
+
+movies <- remove_nulls(movies, c('studio','dvd_rel_year','dvd_rel_month','dvd_rel_day','runtime'))
+
+```
+
+Let's see how the distribution of target variable is 
+
+```{r viz-01-hist}
+
+
+summary(movies$popularity)
+
+hist(movies$popularity, breaks = 100)
+
+```
+
+
+This histogram and summary stats where mean is greater than median shows that the distribution is right skewed with max values being 447.580
+
+```{r viz-02-votes-critic-scatter}
+
+model_a <- lm(movies$popularity ~ movies$critics_score)
+summary(model_a)
+
+plot(movies$popularity,  movies$critics_score)
+
+
+```
+
+Above scatter plot shows that there seems to be no visbile trend that audience score increases/decreases as the critics score increase. From the linear model above, where R-Squared and Adjusted R-2 are close to 0.09 shows that model is terrible and addtional variables might need to be added to get a parsimonous model 
+
+* * *
+
+## Part 4: Modeling
+
+Let's build a baseline model with all the remaining variables available which can help us decide what are the most useful varibales and how to get a parsimous model out of it 
+
+Firstly, we need to know what are the column names and what are their types. `str` fuction should give us that information. This can help us in first pass at getting rid of unnecessary features that might no contribute in any way to modelling like URL. 
+
+```{r getting-structure}
+
+str(movies)
+
+```
+
+```{r unique-values-per-variable}
+
+
+apply(movies, 2, function(x) length(unique(x)))
+
+# What are the unique values in column studio
+for (i in unique(movies$title_type)) {print(i)}
+
+```
+
+Variables  `director`, `actor1`,`actor2`,`actor3`,`actor4` are basically actor names who played in the movie in the order of importance of the part they are playing. Common sense says that actors are a great contibutor to the movie success but if the data set has too many unique actors and director, model might create too many hot-encoded variables(they are considered category varaibles and for each unique value of a variable different level is created which is no help full to ). Here, minimum unique value for these variables is 486 from above code chunk. So, we can get rid of these. 
+For the same reason, we can also get rid of `title`, `studio`,`genre`. We are not getting rid of `title_type` because there are only 3 level in that categorical variables and it could be easily interpretable. 
+
+Other variables such as `imdb_url`, `rt_url` are URL of rating website. No way it can influence on movie rating.
+
+'thtr_rel_year', here this variable will not make sense as they might be treated as numerical variables. They can be misleading. So, this could be removed. This is the same case with 'dvd_rel_year' . Where as month when the movie is released might give us some idea on seasonality during an year but it might be too difficult to interpret 12 months in a model. So, It is a good idea to bucked them as seasons like, Spring, Fall, Winter, Summer and used Season as new derived variable and remove month from the model. Same is the case with dvd_rel_month.
+
+`dvd_rel_day` should also could be bucketed like that but spending patterns might be differnt on different days but popularity of movie prediction might not be a result of 
+
+There might be other variables which cannot influence or make very negligible influence on the score, those must be identified with a statistical methods such as forward elimation, back ward elimination etc.,
+
+```{r getting-rid-of-varaibles}
+
+to_remove <- c('director','actor1','actor2','actor3','actor4','actor5','studio','title','imdb_url','rt_url','audience_score','thtr_rel_year','dvd_rel_year','dvd_rel_day','thtr_rel_day','imdb_rating','imdb_num_votes')
+'%ni%' <- Negate('%in%')
+movies <- subset(movies,select = names(movies) %ni% to_remove)
+str(movies)
+
+```
+
+3. Change results in the new ones.
+
+```{r mapping-month-season}
+
+
+thtr_rel_month_tb <- movies %>% dplyr::select(thtr_rel_month) %>%
+  mutate(thtr_rel_month = ifelse(thtr_rel_month %in% c(1,2,3), 'Spring', ifelse(thtr_rel_month %in% c(4, 5,6), 'Summer', ifelse(thtr_rel_month %in% c(7,8,9),'fall',ifelse(thtr_rel_month %in% c(10, 11, 12), 'Winter','Other')))))
+
+movies$thtr_rel_month <- as.factor(pull(thtr_rel_month_tb))
+
+
+dvd_rel_month_tb <- movies %>% dplyr::select(dvd_rel_month) %>%
+  mutate(dvd_rel_month = ifelse(dvd_rel_month %in% c(1,2,3), 'Spring', ifelse(dvd_rel_month %in% c(4, 5,6), 'Summer', ifelse(dvd_rel_month %in% c(7,8,9),'fall',ifelse(dvd_rel_month %in% c(10, 11, 12), 'Winter','Other')))))
+
+movies$dvd_rel_month <- as.factor(pull(dvd_rel_month_tb))
+
+
+```
+
+
+Now we have 22 variables remaining. Now, we have to explore these varaibles in details to see for any noticable patterns
+
+Let's build a baseline model with all these 23 variables. 
+
+```{r building-base-model}
+
+base_model  <- lm(popularity ~ title_type + genre + runtime + mpaa_rating 
+              + thtr_rel_month  + dvd_rel_month  + critics_rating + critics_score + audience_rating + best_pic_nom + best_pic_win + best_actor_win + best_actress_win + best_dir_win + top200_box , data =  movies )
+summary(base_model)
+
+```
+
+Here, R-Squared indicates that the model explains 44.79% variance in the dataset. Let's try to build a parsimonius model instead of using every variable available. 
+
+
+```{r backward-selection}
+set.seed(1)
+model_1 <- lm(popularity ~ ., data = movies)
+
+ols_step_backward_p(model_1)
+
+```
+
+```{r final-parsimonious-model}
+
+final_model <-lm(formula = popularity ~ genre + runtime + mpaa_rating + 
+      critics_rating + critics_score + best_pic_nom + 
+    best_pic_win + top200_box, data = movies)
+
+summary(final_model)
+
+```
+
+Adjusted R2(0.4258) is slightly higher compared to the base_model's R2(0.4156) we built using 22 predictors. Even though this is slightly better, this model is better than base model because number of predictors we are using is only 9
+
+
+To diagonise the model, we need to check following conditions to say that model is valid .
+
+1. Linear Relations between X and Y or random scatter. We are looking for residual to be scatter when it is plotted against numerical explanatory variables
+Out of 12 variables that we used to build the model, there are only three numerical variables runtime, imdb_rating, critics_score
+
+
+
+```{r random-scatter}
+
+plot(final_model$residuals ~ movies$runtime, xlim= c(50,150))
+abline(0, 0)   
+
+
+plot(final_model$residuals ~ movies$critics_score, xlim= c(0,100))
+abline(0, 0)   
+
+
+```
+
+In all the three residual plots above, we don't see a fan-shapped data. They are pretty scattered around zero which means we are satisfying our condition here. 
+2. Nearly normal residuals: Let's check if the residuals are normally distributed here.
+
+```{r normal-residuals}
+
+hist(final_model$residuals, breaks = 100)
+
+summary(final_model$residuals)
+```
+
+Here, the histogram shows that residuals are normally distributed with skew to the right and the mean is zero. This condition is also satisfied.
+
+3. Constant variablity
+
+```{r constant-variability-residuals}
+
+plot(final_model$residuals ~ final_model$fitted, ylim = c(-300000, 300000))
+abline(0, 0)
+
+plot(abs(final_model$residuals) ~ final_model$fitted, ylim = c(-300000, 300000))
+abline(0, 0)
+
+```
+
+Here, the residual plot is fan-shapped that means it doesn't have constant variabilty. For lower values of Y predicted, predictions are more reliable than higher values. This condition is not satisfied
+
+
+4. Independent residuals/observations 
+
+This is not exactly a time series data. So, we can that the observations are independent variables as they are randomly sampled from a pool of movies.If we look at the residual distributions, they are pretty random too. Hence, this condition is satisfied.
+
+```{r independent-residual}
+
+plot(final_model$residuals)
+abline(0, 0)
+
+```
+
+```{r interpreting-coeff}
+
+summary(final_model)
+
+```
+
+* * *
+
+## Part 5: Prediction
+
+To test this model using a movie released in 2016, I used 'Captain America: Civil War' as target movie. Information about this movie is obtained from 
+IMDB.com and rottentomatoes.com
+
+Below are the variables  for this movie:
+
+1. runtime : 147
+2. mpaa_rating : PG-13
+3. thtr_rel_year : 2016
+4. genre : Science Fiction & Fantasy
+5. critics_rating : Fresh
+6. citics_score : 91
+7. best_pic_nom : yes
+8. best_pic_win : no
+9. top200_box : yes
+10. imdb_ratings : 7.8
+11. imdb_num_votes : 506314
+12. audience_score : 89
+
+
+```{r testing-on-a-2016-movie}
+
+test_movie <- data.frame(title="Captain America : Civil War",critics_score=91, genre="Science Fiction & Fantasy", runtime=147, mpaa_rating ='PG-13',thtr_rel_year=2016, critics_rating='Fresh',best_pic_nom = 'yes',best_pic_win ='no', top200_box ='no'
+,imdb_rating = 7.8, imdb_num_votes = 506314, audience_score= 89 )
+
+test_movie$popularity <- ((test_movie$imdb_rating * 10) + test_movie$audience_score) / 2
+
+
+test_movie$popularity <- (test_movie$imdb_num_votes / quantile(test_movie$imdb_num_votes, 0.75))* test_movie$popularity + (1 - (test_movie$imdb_num_votes / quantile(test_movie$imdb_num_votes, 0.75))) * mean(test_movie$popularity)
+
+cat("Predicted Popularity:", predict(final_model, test_movie))
+cat("\nActual Popularity: ", test_movie$popularity)
+
+```
+
+* * *
+
+## Part 6: Conclusion
+
+Considering the movies$popularity ranging from -8 to 447.58, `Captain America : Civil War` movie prediction being around 40 units more than what actual calculated value is not bad. If we reduce the scale of target variable from -8 to 447.58 to 0 and 1, then predicted value and actual values are going to be 0.19 and 0.28, which gives us directionally good information on where this movie stands in terms of our popularity score.
+
+More than accuracy, it is more intersting to look at the parameters that are influencing the prediction. Things like being in top 200 among box offices, critics_score, genre will definetly make an impact on the movie popularity. It is clear from the R2 value that we need more varibales which can go into model to get more accurate model. Even though the model is statiscally significant as we used back ward elimination P-value method to get rid of varibales, we can only explain around 36% of variablity in the data with variables that are used in the final model. As most of the variables used in the final model are categorical, it might be help full to have more numerical data for us to get better accuracy. Other variables that  could be used are budget of the movie, promotional ad spent, trailer views on youtube, social media followers etc.,
+
